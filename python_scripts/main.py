@@ -119,7 +119,7 @@ chi.x.scatter_forward()
 
 
 # surface traction
-tau = 0.0 # surface traction absolute value
+tau = -50e3 # surface traction absolute value
 t_surface = fem.Constant(domain, default_scalar_type((0.0, -tau)))
 
 dS_top = dS(6) # top interface tag as input
@@ -183,6 +183,14 @@ bcs_mixed = bc_list
 
 problem = NewtonSolverNonlinearProblem(F_tot, U, bcs=bcs_mixed, J=J_tot)
 solver = NewtonSolver(domain.comm, problem)
+
+# --- Configurazione fondamentale per problemi misti (saddle-point) ---
+ksp = solver.krylov_solver
+ksp.setType("preonly") # Disabilita i metodi iterativi
+pc = ksp.getPC()
+pc.setType("lu")       # Forza la fattorizzazione diretta LU
+pc.setFactorSolverType("mumps") # Usa MUMPS (molto robusto per zeri sulla diagonale)
+# --------------------------------------------------------------------
 
 solver.atol = 1e-8
 solver.rtol = 1e-8
@@ -249,7 +257,7 @@ h_func.x.scatter_forward()
 Omega_solid_eval = (
     0.5 * G * (I1_eval - 2 - 2 * ufl.ln(J_eval))
     + 0.5 * K * (J_eval - 1) ** 2
-    + J_eval * mu0 * mu * ufl.dot(ufl.inv(F_eval.T) * hl_eval, ufl.inv(F_eval.T) * hl_eval)
+    - J_eval * mu0 * mu * ufl.dot(ufl.inv(F_eval.T) * hl_eval, ufl.inv(F_eval.T) * hl_eval)
 )
 Pin_solid_eval = ufl.diff(Omega_solid_eval, F_eval)
 sigma_solid = (1.0 / J_eval) * Pin_solid_eval * F_eval.T
@@ -316,10 +324,6 @@ sigma_yy_cell = fem.Function(Q0)
 sigma_yy_cell.name = "sigma_yy_cell"
 sigma_yy_cell.interpolate(sigma_yy_expr)
 sigma_yy_cell.x.scatter_forward()
-sigma_yy_neg_cell = fem.Function(Q0)
-sigma_yy_neg_cell.name = "sigma_yy_neg_cell"
-sigma_yy_neg_cell.interpolate(fem.Expression(-sigma_solid[1, 1], Q0.element.interpolation_points))
-sigma_yy_neg_cell.x.scatter_forward()
 
 # Altri campi cell-based (DG0) per plot su inclusione
 u_mag_expr = fem.Expression(ufl.sqrt(ufl.inner(u, u)), Q0.element.interpolation_points)
@@ -353,7 +357,7 @@ dofs_inclusion_cells = fem.locate_dofs_topological(Q0, tdim, cell_tag.find(1))
 all_cell_dofs = np.arange(Q0.dofmap.index_map.size_local, dtype=np.int32)
 mask_outside = np.ones_like(all_cell_dofs, dtype=bool)
 mask_outside[dofs_inclusion_cells] = False
-for f_cell in (sigma_yy_cell, u_mag_cell, J_cell, hx_cell, hy_cell, h_mag_cell, sigma_yy_neg_cell):
+for f_cell in (sigma_yy_cell, u_mag_cell, J_cell, hx_cell, hy_cell, h_mag_cell):
     arr = f_cell.x.array
     arr[mask_outside] = np.nan
     f_cell.x.array[:] = arr
@@ -429,7 +433,6 @@ cell_regions[cell_tag.indices[owned_cells]] = cell_tag.values[owned_cells]
 grid.cell_data["region"] = cell_regions
 # Aggiungi sigma_yy su base cella (DG0) per plot senza smearing ai bordi
 grid.cell_data["sigma_yy_cell"] = sigma_yy_cell.x.array.copy()
-grid.cell_data["-sigma_yy_cell"] = sigma_yy_neg_cell.x.array.copy()
 grid.cell_data["|u|_cell"]      = u_mag_cell.x.array.copy()
 grid.cell_data["J_cell"]        = J_cell.x.array.copy()
 grid.cell_data["hx_cell"]       = hx_cell.x.array.copy()
@@ -485,7 +488,7 @@ if domain.comm.rank == 0:
     pSig.add_text(f"Stress totale tau22", font_size=12)
     pSig.add_mesh(
         inclusion_def,
-        scalars="-sigma_yy_cell",
+        scalars="sigma_yy_cell",
         cmap="coolwarm",
         show_edges=False,
         scalar_bar_args={"title": "[Pa]", **SCALAR_BAR_VERTICAL},
