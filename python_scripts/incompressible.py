@@ -54,6 +54,7 @@ W = fem.functionspace(domain, mixed_element([Ve_u, Ve_m, Ve_p]))
 # collapsed function spaces
 V_u_c, dofs_u = W.sub(0).collapse()
 V_phi_c, dofs_phi = W.sub(1).collapse()
+V_p_c, dofs_p = W.sub(2).collapse()
 interp_pts_vec = V_u_c.element.interpolation_points
 # print(interp_pts_vec)
 
@@ -120,7 +121,7 @@ chi.x.scatter_forward()
 
 
 # surface traction
-tau = -50e3 # surface traction absolute value
+tau = 0.0 # surface traction absolute value
 t_surface = fem.Constant(domain, default_scalar_type((0.0, -tau)))
 
 dS_top = dS(6) # top interface tag as input
@@ -215,12 +216,16 @@ print(f"Convergenza: sì, Iterazioni: {num_its}")
 # results
 u = fem.Function(V_u_c)
 phi = fem.Function(V_phi_c)
+p = fem.Function(V_p_c)
 u.name = "u"
 phi.name = "phi"
+p.name = "p"
 u.x.array[:] = U.x.array[dofs_u]
 phi.x.array[:] = U.x.array[dofs_phi]
+p.x.array[:] = U.x.array[dofs_p]
 u.x.scatter_forward()
 phi.x.scatter_forward()
+p.x.scatter_forward()
 
 # lagrangian quantities
 
@@ -262,6 +267,7 @@ h_func.x.scatter_forward()
 
 Omega_solid_eval = (
     0.5 * G * (I1_eval - 2)
+    + p * (J_eval - 1)
     - mu0 * mu * ufl.dot(ufl.inv(F_eval.T) * hl_eval, ufl.inv(F_eval.T) * hl_eval)
 )
 Pin_solid_eval = ufl.diff(Omega_solid_eval, F_eval)
@@ -279,6 +285,14 @@ sigma_func.x.scatter_forward()
 # =========================
 import pyvista as pv
 from dolfinx.plot import vtk_mesh
+import os
+
+risultati_dir = "risultati_immagini"
+
+if domain.comm.rank == 0 and not os.path.exists(risultati_dir):
+    os.makedirs(risultati_dir)
+
+
 
 # --- 1. Spazio scalare P1 per post-processing (coerente con la mesh di dominio)
 V1 = fem.functionspace(domain, ("Lagrange", 1))
@@ -461,7 +475,7 @@ inclusion_def  = grid_def.extract_cells(cells_inclusion)
 if domain.comm.rank == 0:
     p = pv.Plotter(window_size=(900, 600))
     p.enable_parallel_projection()
-    p.add_text(f"Spostamento u", font_size=12)
+    p.add_text(r"Displacement u", font_size=12)
     p.add_mesh(
         inclusion_def,
         scalars="|u|_cell",
@@ -473,12 +487,15 @@ if domain.comm.rank == 0:
     outline = inclusion_orig.extract_feature_edges(boundary_edges=True, manifold_edges=False)
     p.add_mesh(outline, color="black", line_width=1)
     p.view_xy()
-    p.show()
+    p.reset_camera()
+    file_u = f"{risultati_dir}/displacement_005.png"
+    p.show(screenshot=file_u)
+    print(f"Salvato: {file_u}")
 
     # Deformata inclusione colorata con J
     pJ = pv.Plotter(window_size=(900, 700))
     pJ.enable_parallel_projection()
-    pJ.add_text(f"J = det(F)", font_size=12)
+    pJ.add_text(r"J = det(F)", font_size=12)
     pJ.add_mesh(
         inclusion_def,
         scalars="J_cell",
@@ -493,7 +510,7 @@ if domain.comm.rank == 0:
     # Deformata inclusione colorata con sigma_yy
     pSig = pv.Plotter(window_size=(900, 700))
     pSig.enable_parallel_projection()
-    pSig.add_text(f"Stress totale tau22", font_size=12)
+    pSig.add_text(r"Total magnetic stress $\tau_{22}$", font_size=12)
     pSig.add_mesh(
         inclusion_def,
         scalars="sigma_yy_cell", # MODIFICA: cambiato da -sigma_yy_cell a sigma_yy_cell
@@ -508,13 +525,13 @@ if domain.comm.rank == 0:
     # Deformata inclusione colorata con h_x (h = F^{-T} hl)
     pHx = pv.Plotter(window_size=(900, 700))
     pHx.enable_parallel_projection()
-    pHx.add_text(f"Campo magnetico h_x", font_size=12)
+    pHx.add_text(r"Magnetic field h$_1$", font_size=12)
     pHx.add_mesh(
         inclusion_def,
         scalars="hx_cell",
         cmap="rainbow",
         show_edges=False,
-        scalar_bar_args={"title": "h_x [A/m]", **SCALAR_BAR_VERTICAL},
+        scalar_bar_args={"title": r"h$_1$ [A/m]", **SCALAR_BAR_VERTICAL},
     )
     pHx.add_mesh(outline, color="black", line_width=1)
     pHx.view_xy()
@@ -523,7 +540,7 @@ if domain.comm.rank == 0:
     # Deformata inclusione colorata con h_y
     pHy = pv.Plotter(window_size=(900, 700))
     pHy.enable_parallel_projection()
-    pHy.add_text(f"Campo magnetico h_y", font_size=12)
+    pHy.add_text(r"Magnetic field h$_2$", font_size=12)
     hy_vals = inclusion_def.cell_data["hy_cell"]
     finite_hy = hy_vals[np.isfinite(hy_vals)]
     clim_hy = None
@@ -536,12 +553,15 @@ if domain.comm.rank == 0:
         scalars="hy_cell",
         cmap="rainbow",
         show_edges=False,
-        scalar_bar_args={"title": "h_y [A/m]", **SCALAR_BAR_VERTICAL},
+        scalar_bar_args={"title": r"h$_2$ [A/m]", **SCALAR_BAR_VERTICAL},
         clim=clim_hy,
     )
     pHy.add_mesh(outline, color="black", line_width=1)
     pHy.view_xy()
-    pHy.show()
+    pHy.reset_camera()
+    file_hy = f"{risultati_dir}/field_by_005.png"
+    pHy.show(screenshot=file_hy)
+    print(f"Salvato: {file_hy}")
 
     # Deformata inclusione colorata con |h|
     pHmag = pv.Plotter(window_size=(900, 700))
