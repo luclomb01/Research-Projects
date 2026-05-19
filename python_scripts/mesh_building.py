@@ -6,7 +6,7 @@ from dolfinx import mesh
 from geometry_build import Geometry, rounded_rectangle
 
 
-def build_mesh(comm: MPI.Comm, geometry: Geometry) -> Tuple[mesh.Mesh, mesh.meshtags, mesh.meshtags]:
+def build_mesh(comm: MPI.Comm, geometry: Geometry, h_factor: float = 1.0) -> Tuple[mesh.Mesh, mesh.meshtags, mesh.meshtags]:
     if comm.rank == 0:
         gmsh.initialize()
         gmsh.model.add("refined_inclusion")
@@ -62,9 +62,9 @@ def build_mesh(comm: MPI.Comm, geometry: Geometry) -> Tuple[mesh.Mesh, mesh.mesh
 
         threshold_field = gmsh.model.mesh.field.add("Threshold")
         base = min(geometry.l1, geometry.l2) 
-        h_interface = base / 90.0
-        h_inclusion  = base / 65.0
-        h_far = min(geometry.L1, geometry.L2) / 32.0
+        h_interface = (base / 90.0) * h_factor
+        h_inclusion  = (base / 65.0) * h_factor
+        h_far = (min(geometry.L1, geometry.L2) / 32.0) * h_factor
         band = base * 0.55
         gmsh.model.mesh.field.setNumber(threshold_field, "InField", distance_field)
         gmsh.model.mesh.field.setNumber(threshold_field, "SizeMin", h_interface)
